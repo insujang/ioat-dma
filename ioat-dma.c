@@ -31,10 +31,12 @@ static struct completion cmp;
 
 static int ioat_dma_open(struct inode *, struct file *);
 static int ioat_dma_release(struct inode *, struct file *);
+static long ioat_dma_ioctl(struct file *, unsigned int, unsigned long);
 
 static struct file_operations ioat_dma_fops = {
   .open = ioat_dma_open,
   .release = ioat_dma_release,
+  .unlocked_ioctl = ioat_dma_ioctl,
 };
 
 
@@ -44,6 +46,11 @@ static int ioat_dma_open(struct inode *inode, struct file *file) {
 }
 
 static int ioat_dma_release(struct inode *inode, struct file *file) {
+  printk(KERN_INFO "%s\n", __func__);
+  return 0;
+}
+
+static long ioat_dma_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
   printk(KERN_INFO "%s\n", __func__);
   return 0;
 }
