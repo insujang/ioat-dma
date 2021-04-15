@@ -15,6 +15,19 @@
 #include <linux/fs.h>
 #include <linux/cdev.h>
 #include <linux/device.h>
+#include <linux/dmaengine.h>
+
+/* Device driver stuffs */
+static dev_t dev;
+static struct cdev cdev;
+static struct class *pClass;
+static struct device *pDev;
+#define DEVICE_NAME "ioat-dma"
+#define MAX_MINORS 5
+
+/* DMA stuffs */
+static struct dma_chan *pChannel;
+static struct completion cmp;
 
 static int ioat_dma_open(struct inode *, struct file *);
 static int ioat_dma_release(struct inode *, struct file *);
@@ -35,20 +48,14 @@ static int ioat_dma_release(struct inode *inode, struct file *file) {
   return 0;
 }
 
-
-static dev_t dev;
-static struct cdev cdev;
-static struct class *pClass;
-static struct device *pDev;
-#define DEVICE_NAME "ioat-dma"
-#define MAX_MINORS 5
-
 /**
  * https://topic.alibabacloud.com/a/the-register_chrdev-and-register_chrdev_region-of-character-devices_8_8_31256510.html
  * Difference between register_chrdev and register_chrdev_region
  */
 static int __init ioat_dma_init(void) {
   int ret;
+  dma_cap_mask_t mask;
+
   printk(KERN_INFO "%s\n", __func__);
 
   // Register character device
@@ -71,24 +78,39 @@ static int __init ioat_dma_init(void) {
   pClass = class_create(THIS_MODULE, DEVICE_NAME);
   if (IS_ERR(pClass)) {
     printk (KERN_ALERT "%s: class_create failed.\n", __func__);
-    unregister_chrdev_region(dev, 1);
-    return -1;
+    goto unregister;
   }
 
   // Create /dev/ioat-dma
   pDev = device_create(pClass, NULL, dev, NULL, DEVICE_NAME);
   if (IS_ERR(pDev)) {
     printk(KERN_ALERT "%s: device_create failed.\n", __func__);
-    class_destroy(pClass);
-    unregister_chrdev_region(dev, 1);
-    return -1;
+    goto class_destroy;
+  }
+
+  // Create a channel
+  dma_cap_zero(mask);
+  dma_cap_set(DMA_MEMCPY, mask);
+  pChannel = dma_request_chan_by_mask(&mask);
+  if (IS_ERR(pChannel)) {
+    printk(KERN_ALERT "%s: DMA channel request failed.\n", __func__);
+    goto device_destroy;
   }
 
   return 0;
+
+device_destroy:
+  device_destroy(pClass, dev);
+class_destroy:
+  class_destroy(pClass);
+unregister:
+  unregister_chrdev_region(dev, 1);
+  return -1;
 }
 
 static void __exit ioat_dma_exit(void) {
   printk(KERN_INFO "%s\n", __func__);
+  dma_release_channel(pChannel);
   device_destroy(pClass, dev);
   class_destroy(pClass);
   cdev_del(&cdev);
