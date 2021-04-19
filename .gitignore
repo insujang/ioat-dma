@@ -1,7 +1,4 @@
-# ignore everything
-*
-
-# except...
-!.gitignore
-!Makefile
-!ioat-dma.c
+**/*.mod*
+**/*.o
+**/*.cmd
+**/*.ko
