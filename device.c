@@ -173,6 +173,8 @@ int dev_dax_probe(struct device *dev)
 	if (rc)
 		return rc;
 
+	printk(KERN_INFO "%s: device %s range: 0x%llu ~ 0x%llu\n", __func__, dev_name(&dev_dax->dev), res->start, res->end);
+
 	rc = devm_add_action_or_reset(dev, dev_dax_cdev_del, cdev);
 	if (rc)
 		return rc;
