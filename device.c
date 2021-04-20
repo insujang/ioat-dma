@@ -5,8 +5,31 @@
 #include <linux/cdev.h>
 #include <linux/dax.h>
 #include <linux/mman.h>
+#include <linux/fs.h>
+#include <linux/path.h>
+#include <linux/namei.h>
 #include "dax-private.h"
 #include "bus.h"
+
+/* https://stackoverflow.com/a/27901009 */
+struct dax_device *dax_get_device(const char *devpath) {
+	struct inode *inode;
+	struct path path;
+	struct dax_device *dax_dev;
+	struct dev_dax *dev_dax;
+
+	kern_path(devpath, LOOKUP_FOLLOW, &path);
+	inode = path.dentry->d_inode;
+	dax_dev = inode_dax(inode);
+	dev_dax = dax_get_private(dax_dev);
+	if (dax_dev && dev_dax) {
+		printk(KERN_INFO "%s: Found device: %p, name: %s\n", __func__, dax_dev, dev_name(&dev_dax->dev));
+		return dax_dev;
+	}
+
+	return NULL;
+}
+EXPORT_SYMBOL_GPL(dax_get_device);
 
 static int dax_mmap(struct file *filp, struct vm_area_struct *vma)
 {

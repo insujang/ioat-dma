@@ -15,7 +15,11 @@
 #include <linux/fs.h>
 #include <linux/cdev.h>
 #include <linux/device.h>
+#include <linux/dax.h>
 #include <linux/dmaengine.h>
+#include "dax-private.h"
+
+extern struct dax_device *dax_get_device(const char *devpath);
 
 /* Device driver stuffs */
 static dev_t dev;
@@ -41,7 +45,12 @@ static struct file_operations ioat_dma_fops = {
 
 
 static int ioat_dma_open(struct inode *inode, struct file *file) {
-  printk(KERN_INFO "%s\n", __func__);
+  // printk(KERN_INFO "%s\n", __func__);
+
+  struct dax_device *dax_device = dax_get_device("/dev/dax0.0");
+  struct dev_dax *dev_dax = dax_get_private(dax_device);
+  struct resource *res = &dev_dax->region->res;
+  printk(KERN_INFO "%s: range: 0x%llu ~ 0x%llu\n", __func__, res->start, res->end);
   return 0;
 }
 
