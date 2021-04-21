@@ -19,6 +19,7 @@
 #include <linux/dmaengine.h>
 #include "dax-private.h"
 
+
 extern struct dax_device *dax_get_device(const char *devpath);
 
 /* Device driver stuffs */
@@ -28,6 +29,18 @@ static struct class *pClass;
 static struct device *pDev;
 #define DEVICE_NAME "ioat-dma"
 #define MAX_MINORS 5
+
+#define IOCTL_MAGIC 0xad
+
+struct ioctl_dma_args {
+  char device_name[64];
+  u64 src_offset;
+  u64 dst_offset;
+  u64 size;
+  int result;
+} __attribute__ ((packed));
+
+#define IOCTL_IOAT_DMA_SUBMIT _IOWR(IOCTL_MAGIC, 0, struct ioctl_dma_args)
 
 /* DMA stuffs */
 static struct dma_chan *pChannel;
@@ -61,6 +74,26 @@ static int ioat_dma_release(struct inode *inode, struct file *file) {
 
 static long ioat_dma_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
   printk(KERN_INFO "%s\n", __func__);
+
+  switch (cmd) {
+    case IOCTL_IOAT_DMA_SUBMIT: {
+      struct ioctl_dma_args args;
+      if (copy_from_user(&args, (void __user *) arg, sizeof(args))) {
+        return -EFAULT;
+      }
+      printk(KERN_INFO "%s: dev name: %s, src offset: 0x%llx, dst offset: 0x%llx, size: 0x%llx\n",
+                __func__, args.device_name, args.src_offset, args.dst_offset, args.size);
+      args.result = 0;
+      if (copy_to_user((void __user *) arg, &args, sizeof(args))) {
+        return -EFAULT;
+      }
+      break;
+    }
+    default:
+      printk(KERN_WARNING "%s: unsupported command %x\n", __func__, cmd);
+      return -EFAULT;
+  }
+
   return 0;
 }
 
