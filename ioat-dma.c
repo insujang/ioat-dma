@@ -38,10 +38,9 @@ struct ioctl_dma_args {
   u64 src_offset;
   u64 dst_offset;
   u64 size;
-  int result;
 } __attribute__ ((packed));
 
-#define IOCTL_IOAT_DMA_SUBMIT _IOWR(IOCTL_MAGIC, 0, struct ioctl_dma_args)
+#define IOCTL_IOAT_DMA_SUBMIT _IOW(IOCTL_MAGIC, 0, struct ioctl_dma_args)
 
 /* DMA stuffs */
 static struct dma_chan *pChannel;
@@ -71,9 +70,10 @@ static int ioat_dma_release(struct inode *inode, struct file *file) {
 
 static void dma_sync_callback(void *completion) {
   complete(completion);
+  printk(KERN_INFO "%s: callback completes DMA completion.\n", __func__);
 }
 
-static void ioat_dma_ioctl_dma_submit(struct ioctl_dma_args *args, struct dev_dax *dev_dax) {
+static int ioat_dma_ioctl_dma_submit(struct ioctl_dma_args *args, struct dev_dax *dev_dax) {
   struct resource *res = &dev_dax->region->res;
   struct page *page;
   dma_addr_t src, dest;
@@ -85,12 +85,11 @@ static void ioat_dma_ioctl_dma_submit(struct ioctl_dma_args *args, struct dev_da
   unsigned long timeout;
   enum dma_status status;
 
-  args->result = -EINVAL;
+  int result = -EINVAL;
 
   page = pfn_to_page(res->start >> PAGE_SHIFT);
   if (IS_ERR(page)) {
-    args->result = PTR_ERR(page);
-    return;
+    return PTR_ERR(page);
   }
 
   src = dma_map_page(pChannel->device->dev, page, args->src_offset, args->size, DMA_BIDIRECTIONAL);
@@ -98,12 +97,13 @@ static void ioat_dma_ioctl_dma_submit(struct ioctl_dma_args *args, struct dev_da
 
   chan_desc = dmaengine_prep_dma_memcpy(pChannel, dest, src, args->size, flags);
   if (chan_desc == NULL) {
-    args->result = -EINVAL;
+    result = -EINVAL;
     goto unmap;
   }
 
   chan_desc->callback = dma_sync_callback;
   chan_desc->callback_param = &cmp;
+  cookie = dmaengine_submit(chan_desc);
   
   init_completion(&cmp);
   dma_async_issue_pending(pChannel);
@@ -113,21 +113,23 @@ static void ioat_dma_ioctl_dma_submit(struct ioctl_dma_args *args, struct dev_da
 
   if (timeout == 0) {
     printk(KERN_WARNING "%s: DMA timed out.\n", __func__);
-    args->result = -ETIMEDOUT;
+    result = -ETIMEDOUT;
     goto unmap;
   } else if (status != DMA_COMPLETE) {
     printk(KERN_ERR "%s: DMA returned completion callback status of: %s\n",
       __func__, status == DMA_ERROR ? "error" : "in progress");
-    args->result = -EBUSY;
+    result = -EBUSY;
     goto unmap;
   } else {
-    args->result = 0;
+    result = 0;
     goto unmap;
   }
 
 unmap:
   dma_unmap_page(pChannel->device->dev, src, args->size, DMA_BIDIRECTIONAL);
   dma_unmap_page(pChannel->device->dev, dest, args->size, DMA_BIDIRECTIONAL);
+
+  return result;
 }
 
 static long ioat_dma_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
@@ -147,18 +149,11 @@ static long ioat_dma_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 
       dax_device = dax_get_device(args.device_name);
       if (dax_device == NULL) {
-        args.result = -ENODEV;
-        goto submit_teardown;
+        return -ENODEV;
       }
 
       dev_dax = (struct dev_dax *)dax_get_private(dax_device);
-      ioat_dma_ioctl_dma_submit(&args, dev_dax);
-
-submit_teardown:
-      if (copy_to_user((void __user *) arg, &args, sizeof(args))) {
-        return -EFAULT;
-      }
-      break;
+      return ioat_dma_ioctl_dma_submit(&args, dev_dax);
     }
     default:
       printk(KERN_WARNING "%s: unsupported command %x\n", __func__, cmd);

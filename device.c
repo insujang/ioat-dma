@@ -23,7 +23,10 @@ struct dax_device *dax_get_device(const char *devpath) {
 	struct dax_device *dax_dev;
 	struct dev_dax *dev_dax;
 
-	kern_path(devpath, LOOKUP_FOLLOW, &path);
+	int rc = kern_path(devpath, LOOKUP_FOLLOW, &path);
+	if (rc) {
+		return NULL;
+	}
 	inode = path.dentry->d_inode;
 	dax_dev = inode_dax(inode);
 	dev_dax = dax_get_private(dax_dev);

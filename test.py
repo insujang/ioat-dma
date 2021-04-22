@@ -2,7 +2,7 @@ import unittest
 import struct
 import os
 import fcntl
-from ioctl_numbers import _IOWR
+from ioctl_numbers import _IOW
 
 class TestIoatDma(unittest.TestCase):
     def setUp(self):
@@ -17,7 +17,7 @@ class TestIoatDma(unittest.TestCase):
 
     # @unittest.skip
     def test_ioctl(self):
-        # 64sQQQi format (https://docs.python.org/3/library/struct.html#format-characters)
+        # 64sQQQ format (https://docs.python.org/3/library/struct.html#format-characters)
         # 64 bytes char[], 3 consecutive unsigned long longs, int
         # Equivalent to:
         # struct {
@@ -25,17 +25,17 @@ class TestIoatDma(unittest.TestCase):
         # u64 src_offset;
         # u64 dst_offset;
         # u64 size;
-        # int result;
         # }
-        arg = struct.pack('64sQQQi',
+        arg = struct.pack('64sQQQ',
                             '/dev/dax0.0'.encode(),
                             0x0,
                             0x1000,
-                            0x500,
-                            -1)
-        result = fcntl.ioctl(self.fd, _IOWR(0xad, 0, 92), arg)
-        result = struct.unpack('64sQQQi', result)
-        self.assertEqual(result[4], 0)
+                            0x500)
+        try:
+            fcntl.ioctl(self.fd, _IOW(0xad, 0, 88), arg)
+        except OSError as err:
+            self.fail("ioctl() returns an error: {}".format(err))
+        
 
 
 if __name__ == '__main__':
