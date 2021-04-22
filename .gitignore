@@ -6,3 +6,4 @@
 **/*.pyc
 Module.symvers
 modules.order
+test
