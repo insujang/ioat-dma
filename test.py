@@ -3,7 +3,6 @@ import struct
 import os
 import fcntl
 import mmap
-import time
 from ioctl_numbers import _IOW
 
 src_offset = 0x0
