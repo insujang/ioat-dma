@@ -52,6 +52,8 @@ int main() {
     return -1;
   }
 
+  printf("DMA vs memcpy (data size: 0x%llx bytes)\n", size);
+
   double dma_time = perform_dma(ioat_fd, src, dst);
   double memcpy_time = perform_memcpy(src, dst);
 
@@ -71,8 +73,10 @@ double perform_dma(int ioat_fd, void *src, void *dst) {
   char *data = data = generate_random_bytestream(size);
 
   memcpy(src, data, size);
-  check_same_bytestream(src, data, size);
-  free(data);
+  if (check_same_bytestream(src, data, size)) {
+    printf("src - data are different!");
+    exit(1);
+  }
 
   struct ioctl_dma_args args = {
     .device_name = "/dev/dax0.0",
@@ -84,6 +88,13 @@ double perform_dma(int ioat_fd, void *src, void *dst) {
   int result = ioctl(ioat_fd, IOCTL_IOAT_DMA_SUBMIT, &args);
   gettimeofday(&end, 0);
 
+  if (check_same_bytestream(dst, data, size)) {
+    printf("dst - data are different!");
+    exit(1);
+  }
+
+  printf("%s: data verification done!\n", __func__);
+  free(data);
   return (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) * 1e-6;
 }
 
@@ -92,12 +103,21 @@ double perform_memcpy(void *src, void *dst) {
   char *data = data = generate_random_bytestream(size);
 
   memcpy(src, data, size);
-  check_same_bytestream(src, data, size);
-  free(data);
+  if (check_same_bytestream(src, data, size)) {
+    printf("src - data are different!");
+    exit(1);
+  }
 
   gettimeofday(&start, 0);
   memcpy(dst, src, size);
   gettimeofday(&end, 0);
 
+  if (check_same_bytestream(dst, data, size)) {
+    printf("dst - data are different!");
+    exit(1);
+  }
+
+  printf("%s: data verification done!\n", __func__);
+  free(data);
   return (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) * 1e-6;
 }
