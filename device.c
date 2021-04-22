@@ -38,30 +38,6 @@ struct dax_device *dax_get_device(const char *devpath) {
 }
 EXPORT_SYMBOL_GPL(dax_get_device);
 
-// dma_addr_t dax_get_dma_addr(struct dev_dax* dev_dax, size_t offset, size_t size) {
-// 	phys_addr_t addr = dev_dax->pgmap.res.start;
-// 	struct page *page = pfn_to_page(addr >> PAGE_SHIFT);
-// 	const struct dma_map_ops *ops = get_dma_ops(&dev_dax->dev);
-// 	printk(KERN_INFO "%s: dma direct? %d\n", __func__, dma_is_direct(ops));
-// 	printk(KERN_INFO "%s: device %s dma capable? %d\n", __func__, dev_name(&dev_dax->dev),
-// 			dma_capable(&dev_dax->dev, (dma_addr_t) addr + offset, size));
-// 	printk(KERN_INFO "%s: dev->dma_mask: %d, config dma enabled: %d\n",
-// 			__func__, dev_dax->dev.dma_mask, IS_ENABLED(CONFIG_ARCH_DMA_ADDR_T_64BIT));
-
-// 	dma_addr_t dma_addr = dma_map_page(&dev_dax->dev, page, offset, size, DMA_BIDIRECTIONAL);
-// 	// void *addr = __va(dev_dax->pgmap.res.start) + offset;
-// 	// void *addr = devm_memremap_pages(&dev_dax->dev, &dev_dax->pgmap) + offset;
-// 	// if (IS_ERR(addr)) {
-// 	// 	printk(KERN_ERR "%s: devm_memremap_pages returns %ld\n", __func__, PTR_ERR(addr));
-// 	// 	return -1;
-// 	// }
-// 	// dma_addr_t dma_addr = dma_map_single(&dev_dax->dev, addr, size, DMA_BIDIRECTIONAL);
-// 	printk(KERN_INFO "%s: 0x%p -> 0x%llx, error: %d\n",
-// 				__func__, addr + offset, dma_addr, dma_mapping_error(&dev_dax->dev, dma_addr));
-// 	return dma_addr;
-// }
-// EXPORT_SYMBOL_GPL(dax_get_dma_addr);
-
 static int check_vma(struct dev_dax *dev_dax, struct vm_area_struct *vma,
 		const char *func)
 {
