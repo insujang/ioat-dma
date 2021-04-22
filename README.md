@@ -35,3 +35,31 @@ perform_dma: data verification done!
 perform_memcpy: data verification done!
 DMA: 0.008604 s, memcpy: 0.015450 s
 ```
+
+## Using `ioat-dma` Kernel Module
+
+`ioat-dma` receives a request from userspace processes via `ioctl()`, and its ioctl magic number is `0xad`.
+
+> You can also refer to the function `perform_dma()` in `test.c`.
+
+```c
+struct ioctl_dma_args {
+  char device_name[64];
+  uint64_t src_offset;
+  uint64_t dst_offset;
+  uint64_t size;
+} __attribute__ ((packed));
+#define IOCTL_IOAT_DMA_SUBMIT _IOW(0xad, 0, struct ioctl_dma_args)
+
+int fd = open("/dev/ioat-dma", O_RDWR);
+struct ioctl_dma_args args = {
+  .device_name = "/dev/dax0.0",
+  .src_offset = src_offset,
+  .dst_offset = dst_offset,
+  .size = size,
+};
+ioctl(fd, IOCTL_IOAT_DMA_SUBMIT, &args);
+...
+```
+
+This will initiate DMA, copying data from `[src_offset, src_offset + size)` to `[dst_offset, dst_offset + size)` with a properly chosen DMA engine.
