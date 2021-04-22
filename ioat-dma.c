@@ -17,6 +17,7 @@
 #include <linux/device.h>
 #include <linux/dax.h>
 #include <linux/dmaengine.h>
+#include <linux/dma-mapping.h>
 #include "dax-private.h"
 
 
@@ -58,12 +59,8 @@ static struct file_operations ioat_dma_fops = {
 
 
 static int ioat_dma_open(struct inode *inode, struct file *file) {
-  // printk(KERN_INFO "%s\n", __func__);
+  printk(KERN_INFO "%s\n", __func__);
 
-  struct dax_device *dax_device = dax_get_device("/dev/dax0.0");
-  struct dev_dax *dev_dax = dax_get_private(dax_device);
-  struct resource *res = &dev_dax->region->res;
-  printk(KERN_INFO "%s: range: 0x%llu ~ 0x%llu\n", __func__, res->start, res->end);
   return 0;
 }
 
@@ -72,18 +69,92 @@ static int ioat_dma_release(struct inode *inode, struct file *file) {
   return 0;
 }
 
+static void dma_sync_callback(void *completion) {
+  complete(completion);
+}
+
+static void ioat_dma_ioctl_dma_submit(struct ioctl_dma_args *args, struct dev_dax *dev_dax) {
+  struct resource *res = &dev_dax->region->res;
+  struct page *page;
+  dma_addr_t src, dest;
+
+  struct dma_async_tx_descriptor *chan_desc;
+  enum dma_ctrl_flags flags = DMA_CTRL_ACK | DMA_PREP_INTERRUPT;
+  dma_cookie_t cookie;
+
+  unsigned long timeout;
+  enum dma_status status;
+
+  args->result = -EINVAL;
+
+  page = pfn_to_page(res->start >> PAGE_SHIFT);
+  if (IS_ERR(page)) {
+    args->result = PTR_ERR(page);
+    return;
+  }
+
+  src = dma_map_page(pChannel->device->dev, page, args->src_offset, args->size, DMA_BIDIRECTIONAL);
+  dest = dma_map_page(pChannel->device->dev, page, args->dst_offset, args->size, DMA_BIDIRECTIONAL);
+
+  chan_desc = dmaengine_prep_dma_memcpy(pChannel, dest, src, args->size, flags);
+  if (chan_desc == NULL) {
+    args->result = -EINVAL;
+    goto unmap;
+  }
+
+  chan_desc->callback = dma_sync_callback;
+  chan_desc->callback_param = &cmp;
+  
+  init_completion(&cmp);
+  dma_async_issue_pending(pChannel);
+
+  timeout = wait_for_completion_timeout(&cmp, msecs_to_jiffies(5000));
+  status = dma_async_is_tx_complete(pChannel, cookie, NULL, NULL);
+
+  if (timeout == 0) {
+    printk(KERN_WARNING "%s: DMA timed out.\n", __func__);
+    args->result = -ETIMEDOUT;
+    goto unmap;
+  } else if (status != DMA_COMPLETE) {
+    printk(KERN_ERR "%s: DMA returned completion callback status of: %s\n",
+      __func__, status == DMA_ERROR ? "error" : "in progress");
+    args->result = -EBUSY;
+    goto unmap;
+  } else {
+    args->result = 0;
+    goto unmap;
+  }
+
+unmap:
+  dma_unmap_page(pChannel->device->dev, src, args->size, DMA_BIDIRECTIONAL);
+  dma_unmap_page(pChannel->device->dev, dest, args->size, DMA_BIDIRECTIONAL);
+}
+
 static long ioat_dma_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
   printk(KERN_INFO "%s\n", __func__);
 
   switch (cmd) {
     case IOCTL_IOAT_DMA_SUBMIT: {
       struct ioctl_dma_args args;
+      struct dax_device *dax_device;
+      struct dev_dax *dev_dax;
+
       if (copy_from_user(&args, (void __user *) arg, sizeof(args))) {
         return -EFAULT;
       }
       printk(KERN_INFO "%s: dev name: %s, src offset: 0x%llx, dst offset: 0x%llx, size: 0x%llx\n",
                 __func__, args.device_name, args.src_offset, args.dst_offset, args.size);
-      args.result = 0;
+
+      dax_device = dax_get_device(args.device_name);
+      if (dax_device == NULL) {
+        args.result = -ENODEV;
+        goto submit_teardown;
+      }
+
+      dev_dax = (struct dev_dax *)dax_get_private(dax_device);
+      ioat_dma_ioctl_dma_submit(&args, dev_dax);
+
+submit_teardown:
       if (copy_to_user((void __user *) arg, &args, sizeof(args))) {
         return -EFAULT;
       }
@@ -94,7 +165,7 @@ static long ioat_dma_ioctl(struct file *file, unsigned int cmd, unsigned long ar
       return -EFAULT;
   }
 
-  return 0;
+  return -EINVAL;
 }
 
 /**
