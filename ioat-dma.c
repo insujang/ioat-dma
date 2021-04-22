@@ -95,6 +95,9 @@ static int ioat_dma_ioctl_dma_submit(struct ioctl_dma_args *args, struct dev_dax
   src = dma_map_page(pChannel->device->dev, page, args->src_offset, args->size, DMA_BIDIRECTIONAL);
   dest = dma_map_page(pChannel->device->dev, page, args->dst_offset, args->size, DMA_BIDIRECTIONAL);
 
+  printk("%s: DMA about to initiate: 0x%llx -> 0x%llx (size: 0x%llx bytes)\n",
+          __func__, src, dest, args->size);
+
   chan_desc = dmaengine_prep_dma_memcpy(pChannel, dest, src, args->size, flags);
   if (chan_desc == NULL) {
     result = -EINVAL;
@@ -110,19 +113,18 @@ static int ioat_dma_ioctl_dma_submit(struct ioctl_dma_args *args, struct dev_dax
 
   timeout = wait_for_completion_timeout(&cmp, msecs_to_jiffies(5000));
   status = dma_async_is_tx_complete(pChannel, cookie, NULL, NULL);
+  printk(KERN_INFO "%s: wait completed.\n", __func__);
 
   if (timeout == 0) {
     printk(KERN_WARNING "%s: DMA timed out.\n", __func__);
     result = -ETIMEDOUT;
-    goto unmap;
   } else if (status != DMA_COMPLETE) {
     printk(KERN_ERR "%s: DMA returned completion callback status of: %s\n",
       __func__, status == DMA_ERROR ? "error" : "in progress");
     result = -EBUSY;
-    goto unmap;
   } else {
+    printk(KERN_INFO "%s: DMA completed!\n", __func__);
     result = 0;
-    goto unmap;
   }
 
 unmap:
