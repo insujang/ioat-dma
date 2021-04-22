@@ -2,7 +2,14 @@ import unittest
 import struct
 import os
 import fcntl
+import mmap
+import time
 from ioctl_numbers import _IOW
+
+src_offset = 0x0
+dst_offset = 0x10
+size = 0x200000
+data = os.urandom(size)    
 
 class TestIoatDma(unittest.TestCase):
     def setUp(self):
@@ -15,11 +22,17 @@ class TestIoatDma(unittest.TestCase):
         os.close(self.dax)
         os.close(self.ioat)
 
-    def test_nothing(self):
-        self.assertEqual(0, 0)
+    def test_01_dax_src_init(self):
+        mm = mmap.mmap(self.dax, size, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE,
+                        mmap.ACCESS_DEFAULT, src_offset * size)
+        mm.write(data)
+        mm.seek(0)
+        written = mm.read(size)
+        mm.close()
+        self.assertEqual(data, written)
 
     # @unittest.skip
-    def test_ioat_dma(self):
+    def test_02_ioat_dma(self):
         # 64sQQQ format (https://docs.python.org/3/library/struct.html#format-characters)
         # 64 bytes char[], 3 consecutive unsigned long longs, int
         # Equivalent to:
@@ -31,15 +44,22 @@ class TestIoatDma(unittest.TestCase):
         # }
         arg = struct.pack('64sQQQ',
                             '/dev/dax0.0'.encode(),
-                            0x0,
-                            0x1000,
-                            0x500)
+                            src_offset * size,
+                            dst_offset * size,
+                            size)
         try:
             fcntl.ioctl(self.ioat, _IOW(0xad, 0, 88), arg)
         except OSError as err:
             self.fail("ioctl() returns an error: {}".format(err))
-        
 
+    def test_03_dax_dst_validate(self):
+        mm = mmap.mmap(self.dax, size, mmap.MAP_SHARED, mmap.PROT_READ,
+                        mmap.ACCESS_DEFAULT, dst_offset * size)
+        dmaed = mm.read(size)
+        mm.close()
+        self.assertEqual(data, dmaed)
 
+# Reference article: https://stackoverflow.com/a/16364514
 if __name__ == '__main__':
-    unittest.main()
+    print("Randomly generated data: {}... ({} bytes)".format(data[:16], len(data)))
+    unittest.main(failfast=True, exit=False)
