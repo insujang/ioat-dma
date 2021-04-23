@@ -18,10 +18,30 @@
 #include <linux/dax.h>
 #include <linux/dmaengine.h>
 #include <linux/dma-mapping.h>
+#include <linux/path.h>
+#include <linux/namei.h>
 #include "dax-private.h"
 
+/* https://stackoverflow.com/a/27901009 */
+struct dax_device *dax_get_device(const char *devpath) {
+  struct inode *inode;
+	struct path path;
+	struct dax_device *dax_dev;
+	struct dev_dax *dev_dax;
 
-extern struct dax_device *dax_get_device(const char *devpath);
+	int rc = kern_path(devpath, LOOKUP_FOLLOW, &path);
+	if (rc) {
+		return NULL;
+	}
+	inode = path.dentry->d_inode;
+	dax_dev = inode_dax(inode);
+	dev_dax = dax_get_private(dax_dev);
+	if (dax_dev && dev_dax) {
+		return dax_dev;
+	}
+
+	return NULL;
+}
 
 /* Device driver stuffs */
 static dev_t dev;
