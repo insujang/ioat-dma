@@ -63,16 +63,36 @@ struct ioctl_dma_args {
 } __attribute__ ((packed));
 
 #define IOCTL_IOAT_DMA_SUBMIT _IOW(IOCTL_MAGIC, 0, struct ioctl_dma_args)
+#define IOCTL_IOAT_DMA_GET_DEVICE_NUM _IOR(IOCTL_MAGIC, 0, u32)
+#define IOCTL_IOAT_DMA_GET_DEVICE _IOR(IOCTL_MAGIC, 1, u32)
 
 /* DMA stuffs */
 #define DMA_QUEUE_DEPTH 32
 struct ioat_dma_device {
   struct list_head list;
+  int device_index;
+  struct file *user;
   struct dma_chan *chan;
   struct completion comp[DMA_QUEUE_DEPTH];
+  bool comp_in_use[DMA_QUEUE_DEPTH];
 };
 
-static LIST_HEAD(dma_device_list);
+static LIST_HEAD(dma_devices);
+static u32 n_dma_devices;
+
+static struct ioat_dma_device *get_ioat_dma_available_device(struct file *file) {
+  struct ioat_dma_device *device;
+  list_for_each_entry(device, &dma_devices, list) {
+    if (device->user) {
+      continue;
+    }
+
+    device->user = file;
+    return device;
+  }
+
+  return ERR_PTR(-ENODEV);
+}
 
 static int ioat_dma_open(struct inode *, struct file *);
 static int ioat_dma_release(struct inode *, struct file *);
@@ -92,7 +112,15 @@ static int ioat_dma_open(struct inode *inode, struct file *file) {
 }
 
 static int ioat_dma_release(struct inode *inode, struct file *file) {
-  printk(KERN_INFO "%s\n", __func__);
+  dev_dbg(pDev, "%s\n", __func__);
+  struct ioat_dma_device *device;
+  list_for_each_entry(device, &dma_devices, list) {
+    if (device->user == file) {
+      dev_info(pDev, "releasing device %s\n", dev_name(device->chan->device->dev));
+      device->user = NULL;
+    }
+  }
+
   return 0;
 }
 
@@ -163,7 +191,7 @@ unmap:
 }
 
 static long ioat_dma_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
-  printk(KERN_INFO "%s\n", __func__);
+  dev_dbg(pDev, "%s\n", __func__);
 
   switch (cmd) {
     case IOCTL_IOAT_DMA_SUBMIT: {
@@ -185,9 +213,29 @@ static long ioat_dma_ioctl(struct file *file, unsigned int cmd, unsigned long ar
       dev_dax = (struct dev_dax *)dax_get_private(dax_device);
       return ioat_dma_ioctl_dma_submit(&args, dev_dax);
     }
+    case IOCTL_IOAT_DMA_GET_DEVICE_NUM: {
+      if (copy_to_user((void __user *) arg, &n_dma_devices, sizeof(n_dma_devices))) {
+        return -EFAULT;
+      }
+      return 0;
+    }
+    case IOCTL_IOAT_DMA_GET_DEVICE: {
+      struct ioat_dma_device *device;
+
+      device = get_ioat_dma_available_device(file);
+      if (IS_ERR(device)) {
+        return PTR_ERR(device);
+      }
+
+      if (copy_to_user((void __user *) arg, &device->device_index, sizeof(device->device_index))) {
+        device->user = NULL;
+        return -EFAULT;
+      }
+
+      return 0;
+    }
     default:
-      printk(KERN_WARNING "%s: unsupported command %x\n", __func__, cmd);
-      return -EFAULT;
+      dev_warn(pDev, "unsupported command %x\n", cmd);
   }
 
   return -EINVAL;
@@ -243,8 +291,11 @@ static int create_dma_channels(void) {
 
   while (!IS_ERR(chan)) {
     struct ioat_dma_device *dma_device = devm_kzalloc(pDev, sizeof(struct ioat_dma_device), GFP_KERNEL);
+    dma_device->device_index = n_dma_devices;
+    dma_device->user = NULL;
     dma_device->chan = chan;
-    list_add_tail(&dma_device->list, &dma_device_list);
+    list_add_tail(&dma_device->list, &dma_devices);
+    n_dma_devices++;
     dev_info(pDev, "Found DMA device: %s\n", dev_name(chan->device->dev));
 
     chan = dma_request_chan_by_mask(&mask);
@@ -266,7 +317,11 @@ static int __init ioat_dma_init(void) {
 }
 
 static void __exit ioat_dma_exit(void) {
+  struct ioat_dma_device *device;
   printk(KERN_INFO "%s\n", __func__);
+  list_for_each_entry(device, &dma_devices, list) {
+    list_del(&device->list);
+  }
   device_destroy(pClass, dev);
   class_destroy(pClass);
   cdev_del(&cdev);
