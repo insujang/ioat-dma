@@ -3,7 +3,7 @@ import struct
 import os
 import fcntl
 import mmap
-from ioctl_numbers import _IOW
+from ioctl_numbers import _IO, _IOR, _IOW, _IOWR
 
 src_offset = 0x0
 dst_offset = 0x10
@@ -21,7 +21,22 @@ class TestIoatDma(unittest.TestCase):
         os.close(self.dax)
         os.close(self.ioat)
 
-    def test_01_dax_src_init(self):
+    def test_00_get_device_num(self):
+        arg = struct.pack('I', 0)
+        try:
+            result = fcntl.ioctl(self.ioat, _IOR(0xad, 0, 4), arg)
+        except OSError as err:
+            self.fail("ioctl() returns an error: {}".format(err))
+        self.assertGreater(result[0], 0)
+        
+    def test_01_get_device(self):
+        try:
+            fcntl.ioctl(self.ioat, _IO(0xad, 0))
+        except OSError as err:
+            self.fail("ioctl() returns an error: {}".format(err))
+
+    @unittest.skip
+    def test_11_dax_src_init(self):
         mm = mmap.mmap(self.dax, size, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE,
                         mmap.ACCESS_DEFAULT, src_offset * size)
         mm.write(data)
@@ -30,8 +45,8 @@ class TestIoatDma(unittest.TestCase):
         mm.close()
         self.assertEqual(data, written)
 
-    # @unittest.skip
-    def test_02_ioat_dma(self):
+    @unittest.skip
+    def test_12_ioat_dma(self):
         # 64sQQQ format (https://docs.python.org/3/library/struct.html#format-characters)
         # 64 bytes char[], 3 consecutive unsigned long longs, int
         # Equivalent to:
@@ -51,7 +66,8 @@ class TestIoatDma(unittest.TestCase):
         except OSError as err:
             self.fail("ioctl() returns an error: {}".format(err))
 
-    def test_03_dax_dst_validate(self):
+    @unittest.skip
+    def test_13_dax_dst_validate(self):
         mm = mmap.mmap(self.dax, size, mmap.MAP_SHARED, mmap.PROT_READ,
                         mmap.ACCESS_DEFAULT, dst_offset * size)
         dmaed = mm.read(size)
