@@ -34,42 +34,28 @@ class TestIoatDma(unittest.TestCase):
         
     def test_01_get_device(self):
         try:
-            arg = struct.pack('I', 0)
-            result = fcntl.ioctl(self.ioat, _IOR(0xad, 1, 4), arg)
-            result = struct.unpack('I', result)
+            arg = struct.pack('Q', 0)
+            result = fcntl.ioctl(self.ioat, _IOR(0xad, 1, 8), arg)
+            result = struct.unpack('Q', result)
             print("device id: {}.".format(result[0]), end=' ', flush=True)
             self.assertGreaterEqual(result[0], 0)
         except OSError as err:
             self.fail("ioctl() returns an error: {}".format(err))
 
-    def test_02_get_same_device_for_same_thread1(self):
+    def test_02_get_different_device_for_another_request(self):
         try:
-            arg = struct.pack('I', 0)
-            result = fcntl.ioctl(self.ioat, _IOR(0xad, 1, 4), arg)
-            id1 = struct.unpack('I', result)[0]
-            result = fcntl.ioctl(self.ioat, _IOR(0xad, 1, 4), arg)
-            id2 = struct.unpack('I', result)[0]
-            self.assertEqual(id1, id2)
+            arg = struct.pack('Q', 0)
+            result = fcntl.ioctl(self.ioat, _IOR(0xad, 1, 8), arg)
+            id1 = struct.unpack('Q', result)[0]
+            result = fcntl.ioctl(self.ioat, _IOR(0xad, 1, 8), arg)
+            id2 = struct.unpack('Q', result)[0]
+            self.assertNotEqual(id1, id2)
         except OSError as err:
             self.fail("ioctl() returns an error: {}".format(err))
-
-    def test_03_get_same_device_for_same_thread2(self):
-        ioat2 = os.open("/dev/ioat-dma", os.O_RDWR)
-        self.assertGreater(ioat2, 0)
-        try:
-            arg = struct.pack('I', 0)
-            result = fcntl.ioctl(self.ioat, _IOR(0xad, 1, 4), arg)
-            id1 = struct.unpack('I', result)[0]
-            result = fcntl.ioctl(ioat2, _IOR(0xad, 1, 4), arg)
-            id2 = struct.unpack('I', result)[0]
-            self.assertEqual(id1, id2)
-        except OSError as err:
-            self.fail("ioctl() returns an error: {}".format(err))
-        os.close(ioat2)
 
     def thread_function(self, ioat):
-        arg = struct.pack('I', 0)
-        result = struct.unpack('I', fcntl.ioctl(ioat, _IOR(0xad, 1, 4), arg))[0]
+        arg = struct.pack('Q', 0)
+        result = struct.unpack('Q', fcntl.ioctl(ioat, _IOR(0xad, 1, 8), arg))[0]
         return result
 
     def test_04_get_different_device_for_different_threads(self):
@@ -77,6 +63,7 @@ class TestIoatDma(unittest.TestCase):
         future1 = executor.submit(self.thread_function, self.ioat)
         future2 = executor.submit(self.thread_function, self.ioat)
         self.assertNotEqual(future1.result(), future2.result())
+
 
     # @unittest.skip
     def test_11_dax_src_init(self):
@@ -101,14 +88,15 @@ class TestIoatDma(unittest.TestCase):
         # }
         
         try:
-            arg = struct.pack('I', 0)
-            fcntl.ioctl(self.ioat, _IOR(0xad, 1, 4), arg)
-            arg = struct.pack('64sQQQ',
+            arg = struct.pack('Q', 0)
+            id = struct.unpack('Q', fcntl.ioctl(self.ioat, _IOR(0xad, 1, 8), arg))[0]
+            arg = struct.pack('Q32sQQQ',
+                            id,
                             '/dev/dax0.0'.encode(),
                             src_offset * size,
                             dst_offset * size,
                             size)
-            fcntl.ioctl(self.ioat, _IOW(0xad, 0, 88), arg)
+            fcntl.ioctl(self.ioat, _IOW(0xad, 0, 64), arg)
         except OSError as err:
             self.fail("ioctl() returns an error: {}".format(err))
 

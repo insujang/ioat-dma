@@ -59,7 +59,8 @@ static struct device *pDev;
 #define IOCTL_MAGIC 0xad
 
 struct ioctl_dma_args {
-  char device_name[64];
+  u64 device_id;
+  char device_name[32];
   u64 src_offset;
   u64 dst_offset;
   u64 size;
@@ -67,12 +68,12 @@ struct ioctl_dma_args {
 
 #define IOCTL_IOAT_DMA_SUBMIT _IOW(IOCTL_MAGIC, 0, struct ioctl_dma_args)
 #define IOCTL_IOAT_DMA_GET_DEVICE_NUM _IOR(IOCTL_MAGIC, 0, u32)
-#define IOCTL_IOAT_DMA_GET_DEVICE _IOR(IOCTL_MAGIC, 1, u32)
+#define IOCTL_IOAT_DMA_GET_DEVICE _IOR(IOCTL_MAGIC, 1, u64)
 
 /* DMA stuffs */
 struct ioat_dma_device {
   struct list_head list;
-  u32 device_id;
+  u64 device_id;
   pid_t owner;
   struct dma_chan *chan;
   struct completion comp;
@@ -84,21 +85,19 @@ static u32 n_dma_devices;
 
 static DEFINE_SPINLOCK(device_spinlock);
 
-static struct ioat_dma_device *find_using_device(const pid_t pid) {
+static struct ioat_dma_device *find_ioat_dma_device(u32 device_id) {
   struct ioat_dma_device *device;
   list_for_each_entry(device, &dma_devices, list) {
-    if (device->owner && device->owner == pid) {
+    if (device->device_id == device_id) {
       return device;
     }
   }
   return NULL;
 }
 
-static struct ioat_dma_device *get_ioat_dma_device(const pid_t pid) {
+static struct ioat_dma_device *get_ioat_dma_device(const pid_t tgid) {
   unsigned long flags;
   struct ioat_dma_device *device;
-  device = find_using_device(pid);
-  if (device) return device;
 
   spin_lock_irqsave(&device_spinlock, flags);
   list_for_each_entry(device, &dma_devices, list) {
@@ -107,21 +106,23 @@ static struct ioat_dma_device *get_ioat_dma_device(const pid_t pid) {
     }
 
     dev_info(pDev, "%s: using device %s by %d\n", __func__,
-             dev_name(device->chan->device->dev), pid);
-    device->owner = pid;
+             dev_name(device->chan->device->dev), tgid);
+    device->owner = tgid;
     break;
   }
+  spin_unlock_irqrestore(&device_spinlock, flags);
 
   if (device == NULL) device = ERR_PTR(-ENODEV);
-  spin_unlock_irqrestore(&device_spinlock, flags);
   return device;
 }
 
-static void release_ioat_dma_device(const pid_t pid) {
-  struct ioat_dma_device *device = find_using_device(pid);
-  if (device == NULL) return;
-  dev_info(pDev, "%s: releasing device %s\n", __func__, dev_name(device->chan->device->dev));
-  device->owner = -1;
+static void release_ioat_dma_device(struct ioat_dma_device *dma_device) {
+  unsigned long flags;
+
+  spin_lock_irqsave(&device_spinlock, flags);
+  dev_info(pDev, "%s: releasing device %s\n", __func__, dev_name(dma_device->chan->device->dev));
+  dma_device->owner = -1;
+  spin_unlock_irqrestore(&device_spinlock, flags);
 }
 
 static int ioat_dma_open(struct inode *, struct file *);
@@ -144,9 +145,8 @@ static int ioat_dma_open(struct inode *inode, struct file *file) {
 static int ioat_dma_release(struct inode *inode, struct file *file) {
   struct ioat_dma_device *device;
   list_for_each_entry(device, &dma_devices, list) {
-    if (device->owner == current->pid) {
-      release_ioat_dma_device(current->pid);
-      break;
+    if (device->owner == current->tgid) {
+      release_ioat_dma_device(device);
     }
   }
 
@@ -185,7 +185,7 @@ static int ioat_dma_ioctl_dma_submit(struct ioctl_dma_args *args, struct dev_dax
 
   chan_desc = dmaengine_prep_dma_memcpy(dma_device->chan, dst, src, args->size, flags);
   if (chan_desc == NULL) {
-    result = -EINVAL;
+    result = -EFAULT;
     goto unmap;
   }
 
@@ -228,11 +228,7 @@ static long ioat_dma_ioctl(struct file *file, unsigned int cmd, unsigned long ar
       struct ioctl_dma_args args;
       struct dax_device *dax_device;
       struct dev_dax *dev_dax;
-
-      struct ioat_dma_device *dma_device = find_using_device(current->pid);
-      if (dma_device == NULL) {
-        return -EFAULT;
-      }
+      struct ioat_dma_device *dma_device;
 
       if (copy_from_user(&args, (void __user *) arg, sizeof(args))) {
         return -EFAULT;
@@ -244,8 +240,13 @@ static long ioat_dma_ioctl(struct file *file, unsigned int cmd, unsigned long ar
       if (dax_device == NULL) {
         return -ENODEV;
       }
-
       dev_dax = (struct dev_dax *)dax_get_private(dax_device);
+
+      dma_device = find_ioat_dma_device(args.device_id);
+      if (dma_device == NULL) {
+        return -EINVAL;
+      }
+
       return ioat_dma_ioctl_dma_submit(&args, dev_dax, dma_device);
     }
     case IOCTL_IOAT_DMA_GET_DEVICE_NUM: {
@@ -257,13 +258,13 @@ static long ioat_dma_ioctl(struct file *file, unsigned int cmd, unsigned long ar
     case IOCTL_IOAT_DMA_GET_DEVICE: {
       struct ioat_dma_device *device;
 
-      device = get_ioat_dma_device(current->pid);
+      device = get_ioat_dma_device(current->tgid);
       if (IS_ERR(device)) {
         return PTR_ERR(device);
       }
 
       if (copy_to_user((void __user *) arg, &device->device_id, sizeof(device->device_id))) {
-        release_ioat_dma_device(current->pid);
+        release_ioat_dma_device(device);
         return -EFAULT;
       }
 
