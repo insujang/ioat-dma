@@ -65,11 +65,12 @@ struct ioctl_dma_args {
 
 #define IOCTL_IOAT_DMA_SUBMIT _IOW(IOCTL_MAGIC, 0, struct ioctl_dma_args)
 #define IOCTL_IOAT_DMA_GET_DEVICE_NUM _IOR(IOCTL_MAGIC, 0, u32)
-#define IOCTL_IOAT_DMA_GET_DEVICE _IO(IOCTL_MAGIC, 0)
+#define IOCTL_IOAT_DMA_GET_DEVICE _IOR(IOCTL_MAGIC, 1, u32)
 
 /* DMA stuffs */
 struct ioat_dma_device {
   struct list_head list;
+  u32 device_id;
   struct file *user;
   struct dma_chan *chan;
   struct completion comp;
@@ -107,6 +108,13 @@ static struct ioat_dma_device *get_ioat_dma_device(struct file *file) {
   return ERR_PTR(-ENODEV);
 }
 
+static void release_ioat_dma_device(struct file *file) {
+  struct ioat_dma_device *device = find_using_device(file);
+  if (file == NULL) return;
+  dev_info(pDev, "%s: releasing device %s\n", __func__, dev_name(device->chan->device->dev));
+  device->user = NULL;
+}
+
 static int ioat_dma_open(struct inode *, struct file *);
 static int ioat_dma_release(struct inode *, struct file *);
 static long ioat_dma_ioctl(struct file *, unsigned int, unsigned long);
@@ -128,8 +136,8 @@ static int ioat_dma_release(struct inode *inode, struct file *file) {
   struct ioat_dma_device *device;
   list_for_each_entry(device, &dma_devices, list) {
     if (device->user == file) {
-      dev_info(pDev, "%s: releasing device %s\n", __func__, dev_name(device->chan->device->dev));
-      device->user = NULL;
+      release_ioat_dma_device(file);
+      break;
     }
   }
 
@@ -245,6 +253,11 @@ static long ioat_dma_ioctl(struct file *file, unsigned int cmd, unsigned long ar
         return PTR_ERR(device);
       }
 
+      if (copy_to_user((void __user *) arg, &device->device_id, sizeof(device->device_id))) {
+        release_ioat_dma_device(file);
+        return -EFAULT;
+      }
+
       return 0;
     }
     default:
@@ -305,6 +318,7 @@ static int create_dma_channels(void) {
   while (!IS_ERR(chan)) {
     struct ioat_dma_device *dma_device = kzalloc(sizeof(struct ioat_dma_device), GFP_KERNEL);
     dma_device->user = NULL;
+    dma_device->device_id = n_dma_devices;
     dma_device->chan = chan;
     list_add_tail(&dma_device->list, &dma_devices);
     n_dma_devices++;

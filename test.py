@@ -22,16 +22,22 @@ class TestIoatDma(unittest.TestCase):
         os.close(self.ioat)
 
     def test_00_get_device_num(self):
-        arg = struct.pack('I', 0)
         try:
+            arg = struct.pack('I', 0)
             result = fcntl.ioctl(self.ioat, _IOR(0xad, 0, 4), arg)
+            result = struct.unpack('I', result)
+            print("available devices: {}.".format(result[0]), end=' ', flush=True)
+            self.assertGreater(result[0], 0)
         except OSError as err:
             self.fail("ioctl() returns an error: {}".format(err))
-        self.assertGreater(result[0], 0)
         
     def test_01_get_device(self):
         try:
-            fcntl.ioctl(self.ioat, _IO(0xad, 0))
+            arg = struct.pack('I', 0)
+            result = fcntl.ioctl(self.ioat, _IOR(0xad, 1, 4), arg)
+            result = struct.unpack('I', result)
+            print("device id: {}.".format(result[0]), end=' ', flush=True)
+            self.assertGreaterEqual(result[0], 0)
         except OSError as err:
             self.fail("ioctl() returns an error: {}".format(err))
 
@@ -56,13 +62,15 @@ class TestIoatDma(unittest.TestCase):
         # u64 dst_offset;
         # u64 size;
         # }
-        arg = struct.pack('64sQQQ',
+        
+        try:
+            arg = struct.pack('I', 0)
+            fcntl.ioctl(self.ioat, _IOR(0xad, 1, 4), arg)
+            arg = struct.pack('64sQQQ',
                             '/dev/dax0.0'.encode(),
                             src_offset * size,
                             dst_offset * size,
                             size)
-        try:
-            fcntl.ioctl(self.ioat, _IO(0xad, 0))
             fcntl.ioctl(self.ioat, _IOW(0xad, 0, 88), arg)
         except OSError as err:
             self.fail("ioctl() returns an error: {}".format(err))
