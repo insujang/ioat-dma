@@ -20,6 +20,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/path.h>
 #include <linux/namei.h>
+#include <linux/list.h>
 #include "dax-private.h"
 
 /* https://stackoverflow.com/a/27901009 */
@@ -51,6 +52,7 @@ static struct device *pDev;
 #define DEVICE_NAME "ioat-dma"
 #define MAX_MINORS 5
 
+/* ioctl stuffs */
 #define IOCTL_MAGIC 0xad
 
 struct ioctl_dma_args {
@@ -63,8 +65,14 @@ struct ioctl_dma_args {
 #define IOCTL_IOAT_DMA_SUBMIT _IOW(IOCTL_MAGIC, 0, struct ioctl_dma_args)
 
 /* DMA stuffs */
-static struct dma_chan *pChannel;
-static struct completion cmp;
+#define DMA_QUEUE_DEPTH 32
+struct ioat_dma_device {
+  struct list_head list;
+  struct dma_chan *chan;
+  struct completion comp[DMA_QUEUE_DEPTH];
+};
+
+static LIST_HEAD(dma_device_list);
 
 static int ioat_dma_open(struct inode *, struct file *);
 static int ioat_dma_release(struct inode *, struct file *);
@@ -189,22 +197,11 @@ static long ioat_dma_ioctl(struct file *file, unsigned int cmd, unsigned long ar
  * https://topic.alibabacloud.com/a/the-register_chrdev-and-register_chrdev_region-of-character-devices_8_8_31256510.html
  * Difference between register_chrdev and register_chrdev_region
  */
-static int __init ioat_dma_init(void) {
-  int ret;
-  dma_cap_mask_t mask;
-
-  printk(KERN_INFO "%s\n", __func__);
-
-  // Register character device
+static int create_chardev(void) {
+  int ret = 0;
   ret = alloc_chrdev_region(&dev, 0, 1, DEVICE_NAME);
   if (ret < 0) {
     printk (KERN_ALERT "%s: alloc_chrdev_region failed with %d.\n", __func__, ret);
-    return ret;
-  }
-
-  ret = register_chrdev_region(dev, 0, DEVICE_NAME);
-  if (ret < 0) {
-    printk (KERN_ALERT "%s: register_chrdev_region failed with %d.\n", __func__, ret);
     return ret;
   }
 
@@ -215,6 +212,7 @@ static int __init ioat_dma_init(void) {
   pClass = class_create(THIS_MODULE, DEVICE_NAME);
   if (IS_ERR(pClass)) {
     printk (KERN_ALERT "%s: class_create failed.\n", __func__);
+    ret = PTR_ERR(pClass);
     goto unregister;
   }
 
@@ -222,32 +220,53 @@ static int __init ioat_dma_init(void) {
   pDev = device_create(pClass, NULL, dev, NULL, DEVICE_NAME);
   if (IS_ERR(pDev)) {
     printk(KERN_ALERT "%s: device_create failed.\n", __func__);
+    ret = PTR_ERR(pDev);
     goto class_destroy;
-  }
-
-  // Create a channel
-  dma_cap_zero(mask);
-  dma_cap_set(DMA_MEMCPY, mask);
-  pChannel = dma_request_chan_by_mask(&mask);
-  if (IS_ERR(pChannel)) {
-    printk(KERN_ALERT "%s: DMA channel request failed.\n", __func__);
-    goto device_destroy;
   }
 
   return 0;
 
-device_destroy:
-  device_destroy(pClass, dev);
 class_destroy:
   class_destroy(pClass);
 unregister:
   unregister_chrdev_region(dev, 1);
-  return -1;
+  return ret;
+}
+
+static int create_dma_channels(void) {
+  dma_cap_mask_t mask;
+  struct dma_chan *chan = NULL;
+  dma_cap_zero(mask);
+  dma_cap_set(DMA_MEMCPY, mask);
+
+  chan = dma_request_chan_by_mask(&mask);
+
+  while (!IS_ERR(chan)) {
+    struct ioat_dma_device *dma_device = devm_kzalloc(pDev, sizeof(struct ioat_dma_device), GFP_KERNEL);
+    dma_device->chan = chan;
+    list_add_tail(&dma_device->list, &dma_device_list);
+    dev_info(pDev, "Found DMA device: %s\n", dev_name(chan->device->dev));
+
+    chan = dma_request_chan_by_mask(&mask);
+  }
+
+  return 0;
+}
+
+static int __init ioat_dma_init(void) {
+  int ret;
+
+  printk(KERN_INFO "%s\n", __func__);
+  ret = create_chardev();
+  if (ret < 0) {
+    return ret;
+  }
+
+  return create_dma_channels();
 }
 
 static void __exit ioat_dma_exit(void) {
   printk(KERN_INFO "%s\n", __func__);
-  dma_release_channel(pChannel);
   device_destroy(pClass, dev);
   class_destroy(pClass);
   cdev_del(&cdev);
