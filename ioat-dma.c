@@ -22,6 +22,7 @@
 #include <linux/path.h>
 #include <linux/namei.h>
 #include <linux/list.h>
+#include <linux/types.h>
 #include "dax-private.h"
 
 /* https://stackoverflow.com/a/27901009 */
@@ -71,7 +72,7 @@ struct ioctl_dma_args {
 struct ioat_dma_device {
   struct list_head list;
   u32 device_id;
-  struct file *user;
+  pid_t owner;
   struct dma_chan *chan;
   struct completion comp;
   bool comp_in_use;
@@ -80,39 +81,39 @@ struct ioat_dma_device {
 static LIST_HEAD(dma_devices);
 static u32 n_dma_devices;
 
-static struct ioat_dma_device *find_using_device(struct file *file) {
+static struct ioat_dma_device *find_using_device(const pid_t pid) {
   struct ioat_dma_device *device;
   list_for_each_entry(device, &dma_devices, list) {
-    if (device->user && device->user == file) {
+    if (device->owner && device->owner == pid) {
       return device;
     }
   }
   return NULL;
 }
 
-static struct ioat_dma_device *get_ioat_dma_device(struct file *file) {
-  struct ioat_dma_device *device = find_using_device(file);
+static struct ioat_dma_device *get_ioat_dma_device(const pid_t pid) {
+  struct ioat_dma_device *device = find_using_device(pid);
   if (device) return device;
 
   list_for_each_entry(device, &dma_devices, list) {
-    if (device->user) {
+    if (device->owner > 0) {
       continue;
     }
 
-    dev_info(pDev, "%s: using device %s by 0x%p\n", __func__,
-             dev_name(device->chan->device->dev), file);
-    device->user = file;
+    dev_info(pDev, "%s: using device %s by %d\n", __func__,
+             dev_name(device->chan->device->dev), pid);
+    device->owner = pid;
     return device;
   }
 
   return ERR_PTR(-ENODEV);
 }
 
-static void release_ioat_dma_device(struct file *file) {
-  struct ioat_dma_device *device = find_using_device(file);
-  if (file == NULL) return;
+static void release_ioat_dma_device(const pid_t pid) {
+  struct ioat_dma_device *device = find_using_device(pid);
+  if (device == NULL) return;
   dev_info(pDev, "%s: releasing device %s\n", __func__, dev_name(device->chan->device->dev));
-  device->user = NULL;
+  device->owner = -1;
 }
 
 static int ioat_dma_open(struct inode *, struct file *);
@@ -135,8 +136,8 @@ static int ioat_dma_open(struct inode *inode, struct file *file) {
 static int ioat_dma_release(struct inode *inode, struct file *file) {
   struct ioat_dma_device *device;
   list_for_each_entry(device, &dma_devices, list) {
-    if (device->user == file) {
-      release_ioat_dma_device(file);
+    if (device->owner == current->pid) {
+      release_ioat_dma_device(current->pid);
       break;
     }
   }
@@ -220,7 +221,7 @@ static long ioat_dma_ioctl(struct file *file, unsigned int cmd, unsigned long ar
       struct dax_device *dax_device;
       struct dev_dax *dev_dax;
 
-      struct ioat_dma_device *dma_device = find_using_device(file);
+      struct ioat_dma_device *dma_device = find_using_device(current->pid);
       if (dma_device == NULL) {
         return -EFAULT;
       }
@@ -248,13 +249,13 @@ static long ioat_dma_ioctl(struct file *file, unsigned int cmd, unsigned long ar
     case IOCTL_IOAT_DMA_GET_DEVICE: {
       struct ioat_dma_device *device;
 
-      device = get_ioat_dma_device(file);
+      device = get_ioat_dma_device(current->pid);
       if (IS_ERR(device)) {
         return PTR_ERR(device);
       }
 
       if (copy_to_user((void __user *) arg, &device->device_id, sizeof(device->device_id))) {
-        release_ioat_dma_device(file);
+        release_ioat_dma_device(current->pid);
         return -EFAULT;
       }
 
@@ -317,7 +318,7 @@ static int create_dma_channels(void) {
 
   while (!IS_ERR(chan)) {
     struct ioat_dma_device *dma_device = kzalloc(sizeof(struct ioat_dma_device), GFP_KERNEL);
-    dma_device->user = NULL;
+    dma_device->owner = -1;
     dma_device->device_id = n_dma_devices;
     dma_device->chan = chan;
     list_add_tail(&dma_device->list, &dma_devices);

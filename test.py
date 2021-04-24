@@ -41,7 +41,7 @@ class TestIoatDma(unittest.TestCase):
         except OSError as err:
             self.fail("ioctl() returns an error: {}".format(err))
 
-    def test_02_get_same_device_for_multiple_requests(self):
+    def test_02_get_same_device_for_same_thread1(self):
         try:
             arg = struct.pack('I', 0)
             result = fcntl.ioctl(self.ioat, _IOR(0xad, 1, 4), arg)
@@ -52,7 +52,7 @@ class TestIoatDma(unittest.TestCase):
         except OSError as err:
             self.fail("ioctl() returns an error: {}".format(err))
 
-    def test_03_get_different_device_for_different_fd(self):
+    def test_03_get_same_device_for_same_thread2(self):
         ioat2 = os.open("/dev/ioat-dma", os.O_RDWR)
         self.assertGreaterEqual(ioat2, 0)
         try:
@@ -61,7 +61,7 @@ class TestIoatDma(unittest.TestCase):
             id1 = struct.unpack('I', result)[0]
             result = fcntl.ioctl(ioat2, _IOR(0xad, 1, 4), arg)
             id2 = struct.unpack('I', result)[0]
-            self.assertNotEqual(id1, id2)
+            self.assertEqual(id1, id2)
         except OSError as err:
             self.fail("ioctl() returns an error: {}".format(err))
         os.close(ioat2)
