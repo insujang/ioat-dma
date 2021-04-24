@@ -88,7 +88,7 @@ static DEFINE_SPINLOCK(device_spinlock);
 static struct ioat_dma_device *find_ioat_dma_device(u32 device_id) {
   struct ioat_dma_device *device;
   list_for_each_entry(device, &dma_devices, list) {
-    if (device->device_id == device_id) {
+    if (device->device_id == device_id && device->owner == current->tgid) {
       return device;
     }
   }
@@ -233,8 +233,8 @@ static long ioat_dma_ioctl(struct file *file, unsigned int cmd, unsigned long ar
       if (copy_from_user(&args, (void __user *) arg, sizeof(args))) {
         return -EFAULT;
       }
-      dev_info(pDev, "dev name: %s, src offset: 0x%llx, dst offset: 0x%llx, size: 0x%llx\n",
-               args.device_name, args.src_offset, args.dst_offset, args.size);
+      dev_dbg(pDev, "dev name: %s, src offset: 0x%llx, dst offset: 0x%llx, size: 0x%llx\n",
+              args.device_name, args.src_offset, args.dst_offset, args.size);
 
       dax_device = dax_get_device(args.device_name);
       if (dax_device == NULL) {
@@ -243,9 +243,7 @@ static long ioat_dma_ioctl(struct file *file, unsigned int cmd, unsigned long ar
       dev_dax = (struct dev_dax *)dax_get_private(dax_device);
 
       dma_device = find_ioat_dma_device(args.device_id);
-      if (dma_device == NULL) {
-        return -EINVAL;
-      }
+      if (dma_device == NULL) return -ENODEV;
 
       return ioat_dma_ioctl_dma_submit(&args, dev_dax, dma_device);
     }

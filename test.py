@@ -1,6 +1,7 @@
 import unittest
 import struct
 import os
+import errno
 import fcntl
 import mmap
 import concurrent.futures
@@ -58,12 +59,11 @@ class TestIoatDma(unittest.TestCase):
         result = struct.unpack('Q', fcntl.ioctl(ioat, _IOR(0xad, 1, 8), arg))[0]
         return result
 
-    def test_04_get_different_device_for_different_threads(self):
+    def test_03_get_different_device_for_different_threads(self):
         executor = concurrent.futures.ThreadPoolExecutor()
         future1 = executor.submit(self.thread_function, self.ioat)
         future2 = executor.submit(self.thread_function, self.ioat)
         self.assertNotEqual(future1.result(), future2.result())
-
 
     # @unittest.skip
     def test_11_dax_src_init(self):
@@ -107,6 +107,18 @@ class TestIoatDma(unittest.TestCase):
         dmaed = mm.read(size)
         mm.close()
         self.assertEqual(data, dmaed)
+
+    def test_14_try_dma_without_device_get(self):
+        try:
+            arg = struct.pack('Q32sQQQ',
+                            255, # not authorized device ID
+                            '/dev/dax0.0'.encode(),
+                            src_offset * size,
+                            dst_offset * size,
+                            size)
+            fcntl.ioctl(self.ioat, _IOW(0xad, 0, 64), arg)
+        except OSError as err:
+            self.assertEqual(err.errno, errno.ENODEV)
 
 # Reference article: https://stackoverflow.com/a/16364514
 if __name__ == '__main__':
