@@ -35,7 +35,7 @@ class TestIoatDma(unittest.TestCase):
         except OSError as err:
             self.fail("ioctl() returns an error: {}".format(err))
 
-    @unittest.skip
+    # @unittest.skip
     def test_11_dax_src_init(self):
         mm = mmap.mmap(self.dax, size, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE,
                         mmap.ACCESS_DEFAULT, src_offset * size)
@@ -45,7 +45,7 @@ class TestIoatDma(unittest.TestCase):
         mm.close()
         self.assertEqual(data, written)
 
-    @unittest.skip
+    # @unittest.skip
     def test_12_ioat_dma(self):
         # 64sQQQ format (https://docs.python.org/3/library/struct.html#format-characters)
         # 64 bytes char[], 3 consecutive unsigned long longs, int
@@ -62,11 +62,12 @@ class TestIoatDma(unittest.TestCase):
                             dst_offset * size,
                             size)
         try:
+            fcntl.ioctl(self.ioat, _IO(0xad, 0))
             fcntl.ioctl(self.ioat, _IOW(0xad, 0, 88), arg)
         except OSError as err:
             self.fail("ioctl() returns an error: {}".format(err))
 
-    @unittest.skip
+    # @unittest.skip
     def test_13_dax_dst_validate(self):
         mm = mmap.mmap(self.dax, size, mmap.MAP_SHARED, mmap.PROT_READ,
                         mmap.ACCESS_DEFAULT, dst_offset * size)
