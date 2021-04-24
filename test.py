@@ -3,6 +3,7 @@ import struct
 import os
 import fcntl
 import mmap
+import concurrent.futures
 from ioctl_numbers import _IO, _IOR, _IOW, _IOWR
 
 src_offset = 0x0
@@ -54,7 +55,7 @@ class TestIoatDma(unittest.TestCase):
 
     def test_03_get_same_device_for_same_thread2(self):
         ioat2 = os.open("/dev/ioat-dma", os.O_RDWR)
-        self.assertGreaterEqual(ioat2, 0)
+        self.assertGreater(ioat2, 0)
         try:
             arg = struct.pack('I', 0)
             result = fcntl.ioctl(self.ioat, _IOR(0xad, 1, 4), arg)
@@ -65,6 +66,17 @@ class TestIoatDma(unittest.TestCase):
         except OSError as err:
             self.fail("ioctl() returns an error: {}".format(err))
         os.close(ioat2)
+
+    def thread_function(self, ioat):
+        arg = struct.pack('I', 0)
+        result = struct.unpack('I', fcntl.ioctl(ioat, _IOR(0xad, 1, 4), arg))[0]
+        return result
+
+    def test_04_get_different_device_for_different_threads(self):
+        executor = concurrent.futures.ThreadPoolExecutor()
+        future1 = executor.submit(self.thread_function, self.ioat)
+        future2 = executor.submit(self.thread_function, self.ioat)
+        self.assertNotEqual(future1.result(), future2.result())
 
     # @unittest.skip
     def test_11_dax_src_init(self):

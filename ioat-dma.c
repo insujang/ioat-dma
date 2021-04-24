@@ -23,6 +23,7 @@
 #include <linux/namei.h>
 #include <linux/list.h>
 #include <linux/types.h>
+#include <linux/spinlock.h>
 #include "dax-private.h"
 
 /* https://stackoverflow.com/a/27901009 */
@@ -81,6 +82,8 @@ struct ioat_dma_device {
 static LIST_HEAD(dma_devices);
 static u32 n_dma_devices;
 
+static DEFINE_SPINLOCK(device_spinlock);
+
 static struct ioat_dma_device *find_using_device(const pid_t pid) {
   struct ioat_dma_device *device;
   list_for_each_entry(device, &dma_devices, list) {
@@ -92,9 +95,12 @@ static struct ioat_dma_device *find_using_device(const pid_t pid) {
 }
 
 static struct ioat_dma_device *get_ioat_dma_device(const pid_t pid) {
-  struct ioat_dma_device *device = find_using_device(pid);
+  unsigned long flags;
+  struct ioat_dma_device *device;
+  device = find_using_device(pid);
   if (device) return device;
 
+  spin_lock_irqsave(&device_spinlock, flags);
   list_for_each_entry(device, &dma_devices, list) {
     if (device->owner > 0) {
       continue;
@@ -103,10 +109,12 @@ static struct ioat_dma_device *get_ioat_dma_device(const pid_t pid) {
     dev_info(pDev, "%s: using device %s by %d\n", __func__,
              dev_name(device->chan->device->dev), pid);
     device->owner = pid;
-    return device;
+    break;
   }
 
-  return ERR_PTR(-ENODEV);
+  if (device == NULL) device = ERR_PTR(-ENODEV);
+  spin_unlock_irqrestore(&device_spinlock, flags);
+  return device;
 }
 
 static void release_ioat_dma_device(const pid_t pid) {
