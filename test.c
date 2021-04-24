@@ -61,12 +61,14 @@ int main() {
 }
 
 struct ioctl_dma_args {
-  char device_name[64];
+  uint64_t device_id;
+  char device_name[32];
   uint64_t src_offset;
   uint64_t dst_offset;
   uint64_t size;
 } __attribute__ ((packed));
 
+#define IOCTL_IOAT_GET_DEVICE_ID _IOR(0xad, 1, uint64_t)
 #define IOCTL_IOAT_DMA_SUBMIT _IOW(0xad, 0, struct ioctl_dma_args)
 double perform_dma(int ioat_fd, void *src, void *dst) {
   struct timeval start, end;
@@ -78,7 +80,11 @@ double perform_dma(int ioat_fd, void *src, void *dst) {
     exit(1);
   }
 
+  uint64_t device_id;
+  ioctl(ioat_fd, IOCTL_IOAT_GET_DEVICE_ID, &device_id);
+
   struct ioctl_dma_args args = {
+    .device_id = device_id,
     .device_name = "/dev/dax0.0",
     .src_offset = src_offset * size,
     .dst_offset = dst_offset * size,
