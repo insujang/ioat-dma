@@ -41,6 +41,31 @@ class TestIoatDma(unittest.TestCase):
         except OSError as err:
             self.fail("ioctl() returns an error: {}".format(err))
 
+    def test_02_get_same_device_for_multiple_requests(self):
+        try:
+            arg = struct.pack('I', 0)
+            result = fcntl.ioctl(self.ioat, _IOR(0xad, 1, 4), arg)
+            id1 = struct.unpack('I', result)[0]
+            result = fcntl.ioctl(self.ioat, _IOR(0xad, 1, 4), arg)
+            id2 = struct.unpack('I', result)[0]
+            self.assertEqual(id1, id2)
+        except OSError as err:
+            self.fail("ioctl() returns an error: {}".format(err))
+
+    def test_03_get_different_device_for_different_fd(self):
+        ioat2 = os.open("/dev/ioat-dma", os.O_RDWR)
+        self.assertGreaterEqual(ioat2, 0)
+        try:
+            arg = struct.pack('I', 0)
+            result = fcntl.ioctl(self.ioat, _IOR(0xad, 1, 4), arg)
+            id1 = struct.unpack('I', result)[0]
+            result = fcntl.ioctl(ioat2, _IOR(0xad, 1, 4), arg)
+            id2 = struct.unpack('I', result)[0]
+            self.assertNotEqual(id1, id2)
+        except OSError as err:
+            self.fail("ioctl() returns an error: {}".format(err))
+        os.close(ioat2)
+
     # @unittest.skip
     def test_11_dax_src_init(self):
         mm = mmap.mmap(self.dax, size, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE,
