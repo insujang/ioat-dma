@@ -9,7 +9,7 @@
  * https://linux-kernel-labs.github.io/refs/heads/master/labs/device_drivers.html
  * https://forums.xilinx.com/xlnx/attachments/xlnx/ELINUX/31239/1/axidma.c
  */
-#define DEBUG
+// #define DEBUG
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -123,7 +123,7 @@ static int create_chardev(void) {
   int ret = 0;
   ret = alloc_chrdev_region(&dev_, 0, 1, DEVICE_NAME);
   if (ret < 0) {
-    printk (KERN_ALERT "%s: alloc_chrdev_region failed with %d.\n", __func__, ret);
+    printk(KERN_ALERT "%s: alloc_chrdev_region failed with %d.\n", __func__, ret);
     return ret;
   }
 
@@ -133,7 +133,7 @@ static int create_chardev(void) {
   // Create /sys/class/ioat-dma in preparation of creating /dev/ioat-dma
   class = class_create(THIS_MODULE, DEVICE_NAME);
   if (IS_ERR(class)) {
-    printk (KERN_ALERT "%s: class_create failed.\n", __func__);
+    printk(KERN_ALERT "%s: class_create failed.\n", __func__);
     ret = PTR_ERR(class);
     goto unregister;
   }

@@ -1,4 +1,4 @@
-#define DEBUG
+// #define DEBUG
 #include <linux/dmaengine.h>
 #include <linux/spinlock.h>
 #include "ioat-dma.h"
@@ -22,7 +22,7 @@ int create_dma_devices(void) {
     dma_device->chan = chan;
     list_add_tail(&dma_device->list, &dma_devices);
     n_dma_devices++;
-    dev_info(dev, "Found DMA device: %s\n", dev_name(chan->device->dev));
+    dev_dbg(dev, "Found DMA device: %s\n", dev_name(chan->device->dev));
 
     chan = dma_request_chan_by_mask(&mask);
   }

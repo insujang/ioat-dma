@@ -1,4 +1,4 @@
-#define DEBUG
+// #define DEBUG
 #include <linux/dmaengine.h>
 #include <linux/dma-mapping.h>
 #include "ioat-dma.h"
@@ -47,8 +47,8 @@ int ioat_dma_ioctl_dma_submit(struct ioctl_dma_args *args, struct dev_dax *dev_d
 
   src = dma_map_page(dma_device->chan->device->dev, page, args->src_offset, args->size, DMA_TO_DEVICE);
   dst = dma_map_page(dma_device->chan->device->dev, page, args->dst_offset, args->size, DMA_FROM_DEVICE);
-  dev_info(dev, "%s: DMA about to be initialized: 0x%llx -> 0x%llx (size: 0x%llx bytes)\n",
-            __func__, src, dst, args->size);
+  dev_dbg(dev, "%s: DMA about to be initialized: 0x%llx -> 0x%llx (size: 0x%llx bytes)\n",
+          __func__, src, dst, args->size);
   
   chan_desc = dmaengine_prep_dma_memcpy(dma_device->chan, dst, src, args->size, flags);
   if (chan_desc == NULL) {
@@ -76,7 +76,7 @@ int ioat_dma_ioctl_dma_submit(struct ioctl_dma_args *args, struct dev_dax *dev_d
       __func__, status == DMA_ERROR ? "error" : "in progress");
     result = -EBUSY;
   } else {
-    dev_info(dev, "%s: DMA completed!\n", __func__);
+    dev_dbg(dev, "%s: DMA completed!\n", __func__);
     result = 0;
   }
 
