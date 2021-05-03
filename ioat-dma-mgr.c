@@ -23,6 +23,8 @@ int create_dma_devices(void) {
     list_add_tail(&dma_device->list, &dma_devices);
     n_dma_devices++;
     dev_dbg(dev, "Found DMA device: %s\n", dev_name(chan->device->dev));
+
+    chan = dma_request_chan_by_mask(&mask);
   }
 
   return 0;
