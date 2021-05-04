@@ -12,6 +12,11 @@ dst_offset = 0x10
 size = 0x200000
 data = os.urandom(size)    
 
+ioctl_dma_get_device_num = _IOR(0xad, 0, 8)
+ioctl_dma_get_device = _IOR(0xad, 1, 8)
+ioctl_dma_submit = _IOW(0xad, 0, 64)
+ioctl_dma_wait = _IOWR(0xad, 0, 16)
+
 class TestIoatDma(unittest.TestCase):
     def setUp(self):
         self.dax = os.open("/dev/dax0.0", os.O_RDWR)
@@ -25,9 +30,9 @@ class TestIoatDma(unittest.TestCase):
 
     def test_00_get_device_num(self):
         try:
-            arg = struct.pack('I', 0)
-            result = fcntl.ioctl(self.ioat, _IOR(0xad, 0, 4), arg)
-            result = struct.unpack('I', result)
+            arg = struct.pack('Q', 0)
+            result = fcntl.ioctl(self.ioat, ioctl_dma_get_device_num, arg)
+            result = struct.unpack('Q', result)
             print("available devices: {}.".format(result[0]), end=' ', flush=True)
             self.assertGreater(result[0], 0)
         except OSError as err:
@@ -36,7 +41,7 @@ class TestIoatDma(unittest.TestCase):
     def test_01_get_device(self):
         try:
             arg = struct.pack('Q', 0)
-            result = fcntl.ioctl(self.ioat, _IOR(0xad, 1, 8), arg)
+            result = fcntl.ioctl(self.ioat, ioctl_dma_get_device, arg)
             result = struct.unpack('Q', result)
             print("device id: {}.".format(result[0]), end=' ', flush=True)
             self.assertGreaterEqual(result[0], 0)
@@ -46,9 +51,9 @@ class TestIoatDma(unittest.TestCase):
     def test_02_get_different_device_for_another_request(self):
         try:
             arg = struct.pack('Q', 0)
-            result = fcntl.ioctl(self.ioat, _IOR(0xad, 1, 8), arg)
+            result = fcntl.ioctl(self.ioat, ioctl_dma_get_device, arg)
             id1 = struct.unpack('Q', result)[0]
-            result = fcntl.ioctl(self.ioat, _IOR(0xad, 1, 8), arg)
+            result = fcntl.ioctl(self.ioat, ioctl_dma_get_device, arg)
             id2 = struct.unpack('Q', result)[0]
             self.assertNotEqual(id1, id2)
         except OSError as err:
@@ -56,7 +61,7 @@ class TestIoatDma(unittest.TestCase):
 
     def thread_function(self, ioat):
         arg = struct.pack('Q', 0)
-        result = struct.unpack('Q', fcntl.ioctl(ioat, _IOR(0xad, 1, 8), arg))[0]
+        result = struct.unpack('Q', fcntl.ioctl(ioat, ioctl_dma_get_device, arg))[0]
         return result
 
     def test_03_get_different_device_for_different_threads(self):
@@ -89,14 +94,20 @@ class TestIoatDma(unittest.TestCase):
         
         try:
             arg = struct.pack('Q', 0)
-            id = struct.unpack('Q', fcntl.ioctl(self.ioat, _IOR(0xad, 1, 8), arg))[0]
+            id = struct.unpack('Q', fcntl.ioctl(self.ioat, ioctl_dma_get_device, arg))[0]
             arg = struct.pack('Q32sQQQ',
                             id,
                             '/dev/dax0.0'.encode(),
                             src_offset * size,
                             dst_offset * size,
                             size)
-            fcntl.ioctl(self.ioat, _IOW(0xad, 0, 64), arg)
+            fcntl.ioctl(self.ioat, ioctl_dma_submit, arg)
+            arg = struct.pack('QQ',
+                            id,
+                            0)
+            result = fcntl.ioctl(self.ioat, ioctl_dma_wait, arg)
+            result = struct.unpack('QQ', result)
+            self.assertEqual(result[1], 1)
         except OSError as err:
             self.fail("ioctl() returns an error: {}".format(err))
 
@@ -116,9 +127,36 @@ class TestIoatDma(unittest.TestCase):
                             src_offset * size,
                             dst_offset * size,
                             size)
-            fcntl.ioctl(self.ioat, _IOW(0xad, 0, 64), arg)
+            fcntl.ioctl(self.ioat, ioctl_dma_submit, arg)
         except OSError as err:
             self.assertEqual(err.errno, errno.ENODEV)
+
+    def test_15_multiple_dma_wait_once(self):
+        try:
+            arg = struct.pack('Q', 0)
+            id = struct.unpack('Q', fcntl.ioctl(self.ioat, ioctl_dma_get_device, arg))[0]
+            arg = struct.pack('Q32sQQQ',
+                            id,
+                            '/dev/dax0.0'.encode(),
+                            src_offset * size,
+                            dst_offset * size,
+                            size)
+            fcntl.ioctl(self.ioat, ioctl_dma_submit, arg)
+            arg = struct.pack('Q32sQQQ',
+                            id,
+                            '/dev/dax0.0'.encode(),
+                            src_offset * size * 2,
+                            dst_offset * size * 2,
+                            size)
+            fcntl.ioctl(self.ioat, ioctl_dma_submit, arg)
+            arg = struct.pack('QQ',
+                            id,
+                            0)
+            result = fcntl.ioctl(self.ioat, ioctl_dma_wait, arg)
+            result = struct.unpack('QQ', result)
+            self.assertEqual(result[1], 2)
+        except OSError as err:
+            self.fail("ioctl() returns an error: {}".format(err))
 
 # Reference article: https://stackoverflow.com/a/16364514
 if __name__ == '__main__':

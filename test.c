@@ -68,8 +68,14 @@ struct ioctl_dma_args {
   uint64_t size;
 } __attribute__ ((packed));
 
+struct ioctl_dma_wait_args {
+  uint64_t device_id;
+  uint64_t result;
+} __attribute__ ((packed));
+
 #define IOCTL_IOAT_GET_DEVICE_ID _IOR(0xad, 1, uint64_t)
 #define IOCTL_IOAT_DMA_SUBMIT _IOW(0xad, 0, struct ioctl_dma_args)
+#define IOCTL_IOAT_DMA_WAIT _IOWR(0xad, 0, struct ioctl_dma_wait_args)
 double perform_dma(int ioat_fd, void *src, void *dst) {
   struct timeval start, end;
   char *data = data = generate_random_bytestream(size);
@@ -94,6 +100,21 @@ double perform_dma(int ioat_fd, void *src, void *dst) {
   int result = ioctl(ioat_fd, IOCTL_IOAT_DMA_SUBMIT, &args);
   gettimeofday(&end, 0);
 
+  double submit_time = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) * 1e-6;
+
+  struct ioctl_dma_wait_args args2 = {
+    .device_id = device_id,
+    .result = 0
+  };
+  gettimeofday(&start, 0);
+  result = ioctl(ioat_fd, IOCTL_IOAT_DMA_WAIT, &args2);
+  gettimeofday(&end, 0);
+
+  double wait_time = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) * 1e-6;
+
+  printf("%s: DMA submit time: %lf s, wait time: %lf s (# of DMA completed: %lu)\n",
+          __func__, submit_time, wait_time, args2.result);
+
   if (check_same_bytestream(dst, data, size)) {
     printf("dst - data are different!");
     exit(1);
@@ -101,7 +122,7 @@ double perform_dma(int ioat_fd, void *src, void *dst) {
 
   printf("%s: data verification done!\n", __func__);
   free(data);
-  return (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) * 1e-6;
+  return submit_time + wait_time;
 }
 
 double perform_memcpy(void *src, void *dst) {

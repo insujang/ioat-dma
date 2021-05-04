@@ -19,7 +19,6 @@
 #include <linux/namei.h>
 #include <linux/list.h>
 #include <linux/types.h>
-#include <linux/spinlock.h>
 #include "dax-private.h"
 #include "ioat-dma.h"
 
@@ -90,6 +89,29 @@ static long ioat_dma_ioctl(struct file *file, unsigned int cmd, unsigned long ar
     }
     case IOCTL_IOAT_DMA_GET_DEVICE_NUM: return ioat_dma_ioctl_get_device_num((void __user *) arg);
     case IOCTL_IOAT_DMA_GET_DEVICE: return ioat_dma_ioctl_get_device((void __user *) arg);
+    case IOCTL_IOAT_DMA_WAIT_ALL: {
+      struct ioctl_dma_wait_args args;
+      struct ioat_dma_device *dma_device;
+      int result;
+
+      if (copy_from_user(&args, (void __user *) arg, sizeof(args))) {
+        return -EFAULT;
+      }
+
+      dma_device = find_ioat_dma_device(args.device_id);
+      if (dma_device == NULL) return -ENODEV;
+
+      result = ioat_dma_ioctl_dma_wait_all(dma_device, &args.completed_dma_num);
+      if (result) {
+        return result;
+      }
+      
+      if (copy_to_user((void __user *) arg, &args, sizeof(args))) {
+        return -EFAULT;
+      }
+
+      return 0;
+    }
     default:
       dev_warn(dev, "unsupported command %x\n", cmd);
   }
@@ -169,10 +191,17 @@ static int __init ioat_dma_init(void) {
 
 static void __exit ioat_dma_exit(void) {
   struct ioat_dma_device *dma_device, *tmp;
+  struct ioat_dma_completion_list_item *comp_entry, *comp_tmp;
 
   dev_dbg(dev, "%s\n", __func__);
   list_for_each_entry_safe(dma_device, tmp, &dma_devices, list) {
     list_del(&dma_device->list);
+
+    list_for_each_entry_safe(comp_entry, comp_tmp, &dma_device->comp_list, list) {
+      list_del(&comp_entry->list);
+      kfree(comp_entry);
+    }
+
     dma_release_channel(dma_device->chan);
     kfree(dma_device);
   }

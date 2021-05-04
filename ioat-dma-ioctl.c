@@ -1,6 +1,7 @@
 // #define DEBUG
 #include <linux/dmaengine.h>
 #include <linux/dma-mapping.h>
+#include <linux/spinlock.h>
 #include "ioat-dma.h"
 
 int ioat_dma_ioctl_get_device_num(void __user *arg) {
@@ -37,11 +38,9 @@ int ioat_dma_ioctl_dma_submit(struct ioctl_dma_args *args, struct dev_dax *dev_d
   
   dma_addr_t src, dst;
   struct dma_async_tx_descriptor *chan_desc;
-  dma_cookie_t cookie;
-  unsigned long timeout;
-  enum dma_status status;
+  struct ioat_dma_completion_list_item *comp_entry;
 
-  int result = -EINVAL;
+  unsigned long lock_flags;
 
   if (IS_ERR(page)) return PTR_ERR(page);
 
@@ -52,37 +51,66 @@ int ioat_dma_ioctl_dma_submit(struct ioctl_dma_args *args, struct dev_dax *dev_d
   
   chan_desc = dmaengine_prep_dma_memcpy(dma_device->chan, dst, src, args->size, flags);
   if (chan_desc == NULL) {
-    result = -EINVAL;
-    goto unmap;
+    dma_unmap_page(dma_device->chan->device->dev, src, args->size, DMA_BIDIRECTIONAL);
+    dma_unmap_page(dma_device->chan->device->dev, dst, args->size, DMA_BIDIRECTIONAL);
+    return -EINVAL;
   }
 
-  init_completion(&dma_device->comp);
+  comp_entry = kzalloc(sizeof(struct ioat_dma_completion_list_item), GFP_KERNEL);
+  init_completion(&comp_entry->comp);
   chan_desc->callback = dma_sync_callback;
-  chan_desc->callback_param = &dma_device->comp;
-  cookie = dmaengine_submit(chan_desc);
-  dma_device->comp_in_use = true;
-  
+  chan_desc->callback_param = &comp_entry->comp;
+  comp_entry->cookie = dmaengine_submit(chan_desc);
+  comp_entry->src = src;
+  comp_entry->dst = dst;
+  comp_entry->size = args->size;
+
   dma_async_issue_pending(dma_device->chan);
 
-  timeout = wait_for_completion_timeout(&dma_device->comp, msecs_to_jiffies(5000));
-  status = dma_async_is_tx_complete(dma_device->chan, cookie, NULL, NULL);
-  dev_dbg(dev, "%s: wait completed.\n", __func__);
+  spin_lock_irqsave(&dma_device->comp_list_lock, lock_flags);
+  list_add_tail(&comp_entry->list, &dma_device->comp_list);
+  spin_unlock_irqrestore(&dma_device->comp_list_lock, lock_flags);
 
-  if (timeout == 0) {
-    dev_warn(dev, "%s: DMA timed out!\n", __func__);
-    result = -ETIMEDOUT;
-  } else if (status != DMA_COMPLETE) {
-    dev_warn(dev, "%s: DMA returned completion callback status of: %s\n",
-      __func__, status == DMA_ERROR ? "error" : "in progress");
-    result = -EBUSY;
-  } else {
-    dev_dbg(dev, "%s: DMA completed!\n", __func__);
-    result = 0;
+  return 0;
+}
+
+int ioat_dma_ioctl_dma_wait_all(struct ioat_dma_device *dma_device, u64 *result) {
+  unsigned long flags;
+  struct ioat_dma_completion_list_item *comp, *tmp;
+
+  unsigned long timeout;
+  enum dma_status status;
+  int dma_result = 0;
+  u64 num_completed = 0;
+
+  spin_lock_irqsave(&dma_device->comp_list_lock, flags);
+
+  list_for_each_entry_safe(comp, tmp, &dma_device->comp_list, list) {
+    timeout = wait_for_completion_timeout(&comp->comp, msecs_to_jiffies(5000));
+    status = dma_async_is_tx_complete(dma_device->chan, comp->cookie, NULL, NULL);
+    dev_dbg(dev, "%s: wait completed.\n", __func__);
+
+    if (timeout == 0) {
+      dev_warn(dev, "%s: DMA timed out!\n", __func__);
+      dma_result = -ETIMEDOUT;
+    } else if (status != DMA_COMPLETE) {
+      dev_warn(dev, "%s: DMA returned completion callback status of: %s\n",
+        __func__, status == DMA_ERROR ? "error" : "in progress");
+      dma_result = -EBUSY;
+    } else {
+      dev_dbg(dev, "%s: DMA completed!\n", __func__);
+      num_completed++;
+    }
+    list_del(&comp->list);
+    dma_unmap_page(dma_device->chan->device->dev, comp->src, comp->size, DMA_BIDIRECTIONAL);
+    dma_unmap_page(dma_device->chan->device->dev, comp->dst, comp->size, DMA_BIDIRECTIONAL);
+    kfree(comp);
+    if (dma_result != 0) {
+      break;
+    }
   }
 
-unmap:
-  dma_unmap_page(dma_device->chan->device->dev, src, args->size, DMA_BIDIRECTIONAL);
-  dma_unmap_page(dma_device->chan->device->dev, dst, args->size, DMA_BIDIRECTIONAL);
-
-  return result;
+  spin_unlock_irqrestore(&dma_device->comp_list_lock, flags);
+  *result = num_completed;
+  return dma_result;
 }

@@ -20,7 +20,11 @@ int create_dma_devices(void) {
     dma_device->owner = -1;
     dma_device->device_id = n_dma_devices;
     dma_device->chan = chan;
+    INIT_LIST_HEAD(&dma_device->comp_list);
+    spin_lock_init(&dma_device->comp_list_lock);
+
     list_add_tail(&dma_device->list, &dma_devices);
+
     n_dma_devices++;
     dev_dbg(dev, "Found DMA device: %s\n", dev_name(chan->device->dev));
 
@@ -30,7 +34,7 @@ int create_dma_devices(void) {
   return 0;
 }
 
-struct ioat_dma_device *find_ioat_dma_device(u32 device_id) {
+struct ioat_dma_device *find_ioat_dma_device(u64 device_id) {
   struct ioat_dma_device *dma_device;
   list_for_each_entry(dma_device, &dma_devices, list) {
     if (dma_device->device_id == device_id && dma_device->owner == current->tgid) {
@@ -63,9 +67,16 @@ struct ioat_dma_device *get_available_ioat_dma_device(void) {
 
 void release_ioat_dma_device(struct ioat_dma_device *dma_device) {
   unsigned long flags;
+  struct ioat_dma_completion_list_item *comp_entry, *comp_tmp;
 
   spin_lock_irqsave(&device_spinlock, flags);
   dev_info(dev, "%s: releasing device %s\n", __func__, dev_name(dma_device->chan->device->dev));
+  dmaengine_terminate_all(dma_device->chan);
+  list_for_each_entry_safe(comp_entry, comp_tmp, &dma_device->comp_list, list) {
+    list_del(&comp_entry->list);
+    kfree(comp_entry);
+  }
+
   dma_device->owner = -1;
   spin_unlock_irqrestore(&device_spinlock, flags);
 }
